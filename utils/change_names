@@ -1,0 +1,17 @@
+import os
+
+def change_names_in_path(path, new_name, delimiter='_'):
+
+    filenames = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+
+    for filename in filenames:
+        filename_split = filename.split(sep=delimiter)
+        if not os.path.isfile('{}{}_{}'.format(path, new_name, filename_split[-1])):
+            os.rename('{}{}'.format(path, filename),
+                      '{}{}_{}'.format(path, new_name, filename_split[-1]))
+
+
+path = 'E:\\Arc_study\\models\\sleep_stage\\unet_scale\\PPG_fft_spatial_unet\\unet_32\\'
+
+
+change_names_in_path(path=path, new_name='model')
