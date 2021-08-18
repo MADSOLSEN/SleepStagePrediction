@@ -66,7 +66,7 @@ def wavenet(x, nb_stacks=1, nb_filters=32, nb_output_bins=256, dilation_depth=9,
     x = layers.Conv1D(nb_filters, 2, dilation_rate=1, padding='same', name='initial_causal_conv')(x)
     for s in range(nb_stacks):
         for i in range(0, dilation_depth + 1):
-            out, skip_out = residual_block(x)
+            x, skip_out = residual_block(x)
             skip_connections.append(skip_out)
 
     if use_skip_connections:
@@ -105,7 +105,7 @@ def wavenet_ori(x, nb_stacks=1, nb_filters=32, nb_output_bins=256, dilation_dept
              padding='valid', causal=True, name='initial_causal_conv')(x)
     for s in range(nb_stacks):
         for i in range(0, dilation_depth + 1):
-            out, skip_out = residual_block(x)
+            x, skip_out = residual_block(x)
             skip_connections.append(skip_out)
 
     if use_skip_connections:

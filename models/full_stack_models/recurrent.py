@@ -52,7 +52,8 @@ def recurrent_model(input_shape,
     if x.shape[1] > 1:
         # Sequential model
         x = rnn_block(x,
-                      init_filter_num=64,
+                      features=128,
+                      filter_increment_factor=filter_increment_factor,
                       dropout_rate=dropout,
                       layer_depth=3,
                       weight_regularization=weight_decay)
@@ -64,11 +65,13 @@ def recurrent_model(input_shape,
     return Model(inputs=x_input, outputs=x)
 
 
-def rnn_block(x, init_filter_num=64, dropout_rate=0., BN_momentum=.95, layer_depth=1, weight_regularization=0.):
+def rnn_block(x, features=64, filter_increment_factor=2., dropout_rate=0., BN_momentum=.95, layer_depth=1, weight_regularization=0.):
+
     for layer_num in range(layer_depth):
-        x = RNN(x, init_filter_num=init_filter_num, weight_regularization=weight_regularization)
+        x = RNN(x, init_filter_num=int(features), weight_regularization=weight_regularization)
         # x = layers.GRU(units=init_filter_num, return_sequences=True)(x)
         x = add_common_layers_1D(x, dropout_rate=dropout_rate, BN_momentum=BN_momentum)
+        features = features * filter_increment_factor
     return x
 
 

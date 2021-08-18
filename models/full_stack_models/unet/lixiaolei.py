@@ -36,6 +36,8 @@ def attention_up_and_concate(down_layer, layer, upsample_size=2, data_format='ch
     # up = Conv2DTranspose(out_channel, [2, 2], strides=[2, 2])(down_layer)
     up = layers.UpSampling2D(size=upsample_size, data_format=data_format)(down_layer)
     up = layers.Conv2D(down_layer.shape[-1], upsample_size, activation=activation, padding='same', data_format=data_format)(up)
+    #up = layers.Conv2D(layer.shape[-1], upsample_size, activation=activation, padding='same', data_format=data_format)(up)
+     # TODO consider using same number of filters between down and upsample
 
     layer = attention_block_2d(x=layer, g=up, inter_channel=in_channel // 4, data_format=data_format)
 
