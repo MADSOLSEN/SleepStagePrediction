@@ -6,9 +6,12 @@
 
 [^1]: Olsen, Mads, et al. "A flexible deep learning architecture for temporal sleep stage classification using accelerometry and photoplethysmography." IEEE Transactions on Biomedical Engineering (2022).
 
-### Minimal example
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+## Minimal example
 Use minimal_example to get started. 
 
-### Reproduction of all experiments in paper
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+## Reproduction of all experiments in paper
 Updates will be coming soon. 
 
