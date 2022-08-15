@@ -3,6 +3,7 @@ import numpy as np
 from matplotlib import gridspec
 from matplotlib import pyplot as plt
 from scipy.interpolate import CubicSpline
+from scipy.stats import loguniform
 # import cv2
 import random
 
@@ -64,7 +65,7 @@ def Inverting(X, p=.5):
 
 def Jitter(X, sigma=0.1):
     myNoise = np.random.normal(loc=0, scale=sigma, size=X.shape)
-    return X+myNoise
+    return X + myNoise
 
 
 def Scaling(X, sigma=0.1):
@@ -134,6 +135,24 @@ def time_mask(spec, T=15, num_masks=16, replace_with_zero=False):
                 cloned[t_zero:mask_end, :] = cloned.mean()
     return cloned
 
+def replace_with_noise(X, sample_prob=0.1, gauss_scale=0.2):
+    X = np.array(X)
+    if random.random() < sample_prob:
+        X = np.random.normal(loc=X.mean(), scale=gauss_scale, size=X.shape)
+    return X
+
+def time_mask_USleep(X, sample_prob=0.1, low=.001, high=0.3, gauss_scale=0.01):
+    # TODO - consider using mean of gauss per freq bin,
+    X = np.array(X)
+    k = 1
+    if random.random() < sample_prob:
+        seg_frag = loguniform.rvs(a=low, b=high)
+        seg_len = int(seg_frag * X.shape[0])
+
+        start_idx = np.random.randint(low=0, high=X.shape[0] - seg_len)
+        gauss_seg = np.random.normal(loc=X.mean(), scale=gauss_scale, size=[seg_len] + list(X.shape[1:]))
+        X[start_idx:start_idx + seg_len, :] = gauss_seg
+    return X
 
 def plot_stuff(X):
 

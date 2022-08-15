@@ -88,8 +88,8 @@ def cal_psd_old(x, fs, window, noverlap, nfft, f_min, f_max, plot_flag=True):
     k = 1
     return S
 
-def cal_psd(x, fs, window, noverlap, nfft, f_min, f_max, plot_flag=False):
-
+def cal_psd(x, fs, window, noverlap, nfft, f_min, f_max, f_sub=1, plot_flag=False):
+    from scipy.ndimage import maximum_filter as maxfilt
     # border edit
     x_ = np.zeros((x.size + window,))
     x_[window // 2: -window // 2] = x
@@ -103,6 +103,8 @@ def cal_psd(x, fs, window, noverlap, nfft, f_min, f_max, plot_flag=False):
                           nfft=nfft)
 
     S = S[(f > f_min) & (f <= f_max), :]
+    S = maxfilt(np.abs(S), size=(f_sub, 1))
+    S = S[::f_sub, :]
     S = np.swapaxes(S, axis1=1, axis2=0)
     S = np.log(S + sys.float_info.epsilon)
     if S.shape[1] != 24:

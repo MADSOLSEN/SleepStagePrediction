@@ -8,7 +8,6 @@ train_arc, validation_arc, test_arc = get_train_validation_test(directories['arc
                                                                         seed=self.seed)
 
 
-
 def train_execution(experiment, idx=0, load_model_name=''):
 
     experiment.create_directory_trees()
@@ -70,3 +69,5 @@ def test_execution(experiment, group='test', load_model_name='', sleep_metrics=F
                 data_plots[n]['output_all'][event].update(output_all[event])
         data_plot['database'] = ''
     return data_plots
+
+

@@ -64,10 +64,12 @@ def collect_signal_features(x, fs, window, window_ext):
 
 def FM_features(x, window, fs, window_ext=0):
     feature_dict = {
-        'VLF': {'fun': frequency(window=window * fs, fs=fs, low=0.0033, high=0.04, normalize_interval=[0.0033, 0.5]), 'ext': 120 * fs, 'num_feat': 1},
-        'LF': {'fun': frequency(window=window * fs, fs=fs, low=0.04, high=0.15, normalize_interval=[0.0033, 0.5]), 'ext': 120 * fs, 'num_feat': 1},
-        'HF': {'fun': frequency(window=window * fs, fs=fs, low=0.15, high=0.5, normalize_interval=[0.0033, 0.5]), 'ext': 120 * fs, 'num_feat': 1}# ,
-        #'energy': {'fun': energy, 'ext': 0, 'num_feat': 1},
+        'VLF': {'fun': frequency(window=window * fs, fs=fs, low=0.0033, high=0.04, normalize_interval=None), 'ext': 120 * fs, 'num_feat': 1},
+        'LF': {'fun': frequency(window=window * fs, fs=fs, low=0.04, high=0.15, normalize_interval=None), 'ext': 120 * fs, 'num_feat': 1},
+        'HF': {'fun': frequency(window=window * fs, fs=fs, low=0.15, high=0.5, normalize_interval=None), 'ext': 120 * fs, 'num_feat': 1},
+        'LF_HF': {'fun': frequency(window=window * fs, fs=fs, low=0.04, high=0.15, normalize_interval=[0.15, 0.5]), 'ext': 120 * fs, 'num_feat': 1},
+        'mean_energy': {'fun': energy, 'ext': 0, 'num_feat': 1},
+        'HR': {'fun': HR, 'ext': 0, 'num_feat': 1}
     }
     fc = feature_collector(x, fs, window, feature_dict=feature_dict)
     features = fc.extract_features(x)
@@ -76,11 +78,14 @@ def FM_features(x, window, fs, window_ext=0):
     return features
 
 
-def ACC_energy(x, window, fs, window_ext=0):
+def ACC_features(x, window, fs, window_ext=0):
     feature_dict = {
-        'LF': {'fun': frequency(window=window * fs, fs=fs, low=0.004, high=0.5, normalize_interval=[0.004, 14]), 'ext': 120 * fs, 'num_feat': 1},
-        'HF': {'fun': frequency(window=window * fs, fs=fs, low=5, high=14, normalize_interval=[0.004, 14]), 'ext': 120 * fs, 'num_feat': 1},
-        'energy': {'fun': energy, 'ext': 0, 'num_feat': 1},
+        'LF': {'fun': frequency(window=window * fs, fs=fs, low=0.04, high=0.5, normalize_interval=None), 'ext': 120 * fs, 'num_feat': 1},
+        'HF': {'fun': frequency(window=window * fs, fs=fs, low=5, high=14, normalize_interval=None), 'ext': 120 * fs, 'num_feat': 1}, # [0.004, 14]
+        'mean_energy': {'fun': energy, 'ext': 0, 'num_feat': 1},
+        'activity': {'fun': activity, 'ext': 0, 'num_feat': 1},
+        'mobility': {'fun': mobility, 'ext': 0, 'num_feat': 1},
+        'complexity': {'fun': complexity, 'ext': 0, 'num_feat': 1},
     }
     fc = feature_collector(x, fs, window, feature_dict=feature_dict)
     feature = fc.extract_features(x)
@@ -91,7 +96,7 @@ def collect_aura_features(x, window, window_ext, fs):
     feature_dict = {}
     for ext in window_ext:
         feature_dict.update({
-            'hearpy_{}'.format(ext): {'fun': get_aura_features(fs=fs), 'ext': ext * fs, 'num_feat': 32},
+            'hearpy_{}'.format(ext): {'fun': get_aura_features(fs=fs), 'ext': ext * fs, 'num_feat': 23}, # 32},
         })
 
     fc = feature_collector(x, fs, window, feature_dict=feature_dict)
@@ -119,22 +124,36 @@ def get_aura_features(fs):
     def aura_features(x):
         features = []
         rr = RR_(x, fs)
+        rr = rr[rr > 0.15]
         # TODO - rr = RR_intervals(x, fs)
-        try:
-            if np.sum(rr) != 0:
-                features += [f for f in aura_hrv.get_time_domain_features(nn_intervals=rr).values()]
-                features += [f for f in aura_hrv.get_frequency_domain_features(nn_intervals=rr, sampling_frequency=fs).values()]
-                features += [f for f in aura_hrv.get_geometrical_features(nn_intervals=rr).values()]
-                features += [f for f in aura_hrv.get_poincare_plot_features(nn_intervals=rr).values()]
-                features += [f for f in aura_hrv.get_sampen(nn_intervals=rr).values()]
-                features += [f for f in aura_hrv.get_csi_cvi_features(nn_intervals=rr).values()]
-                features = [0 if (f is None) or (np.isnan(f)) or (np.isinf(f)) else f for f in features]
-                return features
-            else:
-                return [0] * 32  # something here.
-        except:
-            k = 1
-            return [0] * 32  # something here.
+
+        if np.sum(rr) != 0:
+            try:
+                features += [f for f in aura_hrv.get_time_domain_features(nn_intervals=rr).values()]  # 16
+            except:
+                features += [0] * 16
+
+            try:
+                features += [f for f in aura_hrv.get_poincare_plot_features(nn_intervals=rr).values()]  # 3
+            except:
+                features += [0] * 3
+
+            try:
+                features += [f for f in aura_hrv.get_sampen(nn_intervals=rr).values()]  # 1
+            except:
+                features += [0] * 1
+
+            try:
+                features += [f for f in aura_hrv.get_csi_cvi_features(nn_intervals=rr).values()]  # 3
+            except:
+                features += [0] * 3
+
+            # features += [f for f in aura_hrv.get_frequency_domain_features(nn_intervals=rr, sampling_frequency=fs).values()]
+            # features += [f for f in aura_hrv.get_geometrical_features(nn_intervals=rr).values()]
+            features = [0 if (f is None) or (np.isnan(f)) or (np.isinf(f)) else f for f in features]
+        else:
+            features = [0] * 23
+        return features
     return aura_features
 
 
@@ -167,8 +186,12 @@ def RR_(x, fs):
 
 # time domain features
 # ==================
+
 def energy(x):
-    return np.sum(np.abs(x) ** 2)
+    return np.mean(np.abs(x) ** 2)
+
+def HR(x):
+    return 60 / (x.mean() + 1e-9)
 
 def RMSSD(x):
     return np.sqrt(np.mean(np.diff(x) ** 2))
@@ -186,6 +209,15 @@ def quantile(q=.5):
     def quantile(x):
         return np.quantile(x, q=q)
     return quantile
+
+def activity(x):
+    return np.var(x)
+
+def mobility(x):
+    return np.sqrt( activity(np.diff(x)) / (activity(x) + 1e-9) )
+
+def complexity(x):
+    return np.sqrt( mobility(np.diff(x)) / (mobility(x) + 1e-9))
 
 # frequency domain features
 # ===================

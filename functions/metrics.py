@@ -414,6 +414,44 @@ def get_true_positive_events(target_loc, output_loc, min_iou=0.5):
         true_positives =  [t_l for m_i, t_l in zip(max_iou, target_loc) if m_i >= min_iou]
     return true_positives
 
+def true_positives_function():
+    def calculate_true_positives(target_loc, output_loc, min_iou=0.5):
+        if len(target_loc) == 0 or len(output_loc) == 0:
+            return 0
+        else:
+            iou = jaccard_overlap(np.array(target_loc),
+                                  np.array(output_loc))
+            max_iou = iou.max(0)
+            return (max_iou >= min_iou).sum()
+    return calculate_true_positives
+
+def false_positives_function():
+    def calculate_false_positives(target_loc, output_loc, min_iou=0.5):
+        if len(target_loc) == 0 and len(output_loc) > 0:
+            return len(output_loc)
+        elif len(output_loc) == 0:
+            return 0
+        else:
+            iou = jaccard_overlap(np.array(target_loc),
+                                  np.array(output_loc))
+            max_iou = iou.max(0)
+            true_positive = (max_iou >= min_iou).sum()
+            return len(output_loc) - true_positive
+    return calculate_false_positives
+
+def false_negative_function():
+    def calculate_false_negatives(target_loc, output_loc, min_iou=0.5):
+        if len(output_loc) == 0 and len(target_loc) > 0:
+            return len(target_loc)
+        elif len(target_loc) == 0:
+            return 0
+        else:
+            iou = jaccard_overlap(np.array(target_loc),
+                                  np.array(output_loc))
+            max_iou = iou.max(1)
+            true_positive = (max_iou >= min_iou).sum()
+            return len(target_loc) - true_positive
+    return calculate_false_negatives
 
 def precision_function():
     """takes 2 events scorings
@@ -560,3 +598,8 @@ def specificity_semantic_input_function():
         return specificity
 
     return calculate_specificity_semantic_input
+
+def absolute_error():
+    def calculate_mean_absolute_error(target_loc, output_loc, min_iou):
+        return abs(len(target_loc) - len(output_loc))
+    return calculate_mean_absolute_error
