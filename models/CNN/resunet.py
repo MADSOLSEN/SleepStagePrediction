@@ -1,4 +1,4 @@
-from .lixiaolei import up_and_concate, attention_block_2d, attention_up_and_concate, rec_res_block, res_block
+
 from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 import numpy as np
@@ -11,31 +11,31 @@ def ResUNet(input_shape,
             num_outputs,
             output_layer='sigmoid',
             weight_decay=0.00,
-              momentum=0.99,
-              init_filter_num=8,
-              filter_increment_factor=2 ** (1 / 2),
-              kernel_size=(9, 1),
-              max_pool_size=(2, 1),
-              max_pool_increment_iteration=20,
-              auxiliary_concatenate=False,
-              auxiliary_aux_downsample=False,
-              auxiliary_input_downsample=False,
-              aux_softmax=False,
-              residual=True,
-              residual_connection=False,
-              activation='gelu',
-              attention=False,
-              final_cnn=True,
-              final_split=False,
-              data_format='channels_last',
-              maxpool=False,
-              dilation_rates=[],
-              ConvNeXt_residual=False,
-              inverted_bottleneck=False,
-              stochastic_depth=True,
-              deconvolution=True,
-              depth=None,
-              normalization='batchnorm'):
+            momentum=0.99,
+            init_filter_num=8,
+            filter_increment_factor=2 ** (1 / 2),
+            kernel_size=(9, 1),
+            max_pool_size=(2, 1),
+            max_pool_increment_iteration=20,
+            auxiliary_concatenate=False,
+            auxiliary_aux_downsample=False,
+            auxiliary_input_downsample=False,
+            aux_softmax=False,
+            residual=True,
+            residual_connection=False,
+            activation='gelu',
+            attention=False,
+            final_cnn=True,
+            final_split=False,
+            data_format='channels_last',
+            maxpool=False,
+            dilation_rates=[],
+            ConvNeXt_residual=False,
+            inverted_bottleneck=False,
+            stochastic_depth=True,
+            deconvolution=True,
+            depth=None,
+            normalization='batchnorm'):
 
     # OPO
     #init_filter_num = 8
@@ -43,6 +43,7 @@ def ResUNet(input_shape,
     #max_pool_size = (2, 1)
     #depth = 15
     #kernel_size = (16, 1)
+
     k = 1
     if depth is None:
         depth = determine_depth(temporal_shape=input_shape[0], temporal_max_pool_size=max_pool_size[0], max_pool_increment_iteration=max_pool_increment_iteration)
