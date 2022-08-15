@@ -1,4 +1,4 @@
-![Conceptual visualization of the proposed Deep Learning Framework for Sleep Stage Classification using Accelerometry and Photoplethysmography acquired from Consumer Sleep Technologies](https://github.com/MADSOLSEN/SleepStagePrediction/tree/master/resources/images/model_ver15.png)
+![Conceptual visualization of the proposed Deep Learning Framework for Sleep Stage Classification using Accelerometry and Photoplethysmography acquired from Consumer Sleep Technologies](/resources/images/model_ver15.png)
 
 # A Flexible Deep Learning Architecture for Temporal Sleep Stage Classification using Accelerometry and Photoplethysmography[^1]
 
