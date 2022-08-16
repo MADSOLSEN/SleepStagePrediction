@@ -11,10 +11,12 @@ from utils import check_inf_nan
 import random
 import seaborn as sns
 from copy import deepcopy
+import tqdm
 import pywt
 np.seterr(all='raise')
 
-from utils import get_h5_data, get_h5_events, semantic_formating, intersection_overlap, jaccard_overlap, any_formating, create_directory_tree, binary_to_array
+from utils import get_h5_data, get_h5_events, semantic_formating, intersection_overlap, jaccard_overlap, \
+    any_formating, create_directory_tree, binary_to_array, get_h5_auxiliary
 from signal_processing import regularizers, normalizers
 
 
@@ -59,9 +61,10 @@ class Dataset(Sequence):
                  events_format=None,
                  events_discard_format=[],
                  events_select_format=[],
+                 h5_directory_auxiliary='',
                  prediction_resolution=1,
                  overlap=0.5,
-                 minimum_overlap=0.5,
+                 minimum_overlap=0.1,
                  batch_size=64,
                  mode='inference',
                  transformations_factor=0.1,
@@ -73,7 +76,8 @@ class Dataset(Sequence):
                  dataset_type='',
                  seed=2020,
                  use_mask=True,
-                 load_signal_in_RAM=True):
+                 load_signal_in_RAM=True,
+                 batch_len_multiplier=1):
         # load_signal_in_RAM = False
         # cache_data = False
         # get number of events
@@ -84,14 +88,17 @@ class Dataset(Sequence):
             assert sum(self.event_probabilities) <= 1
             self.event_labels =  [event['name'] for event in events_format]
 
-        self.events_discard_format = events_discard_format[:]
-        self.events_discard_format += [
-            {
-                'name': sf['h5_path'] + '_mask',
-                'h5_path': sf['h5_path'] + '_mask',
-                'extend': 0
-            } for signal_name, sf in signals_format.items() # if not in  ['ppg_features', 'PPG_features', 'RR', 'RR_detrend']
-        ]
+        if use_mask:
+            self.events_discard_format = events_discard_format[:]
+            self.events_discard_format += [
+                {
+                    'name': sf['h5_path'] + '_mask',
+                    'h5_path': sf['h5_path'] + '_mask',
+                    'extend': 0
+                } for signal_name, sf in signals_format.items() # if not in  ['ppg_features', 'PPG_features', 'RR', 'RR_detrend']
+            ]
+        else:
+            self.events_discard_format = []
 
         self.events_select_format = []
 
@@ -103,11 +110,11 @@ class Dataset(Sequence):
         #    }
         #]
 
-        print(self.events_discard_format)
+        #print(self.events_discard_format)
 
         self.load_data = get_h5_data
         self.load_events = get_h5_events
-        #cache_data = False
+        # cache_data = False
         if cache_data:
             memory = Memory(h5_directory + "/.cache/", mmap_mode="r", verbose=0)
             self.load_data = memory.cache(get_h5_data)
@@ -131,6 +138,7 @@ class Dataset(Sequence):
         self.minimum_overlap = minimum_overlap
         self.signals_format = signals_format
         self.h5_directory = h5_directory
+        self.h5_directory_auxiliary = h5_directory_auxiliary
         self.predictions_per_window = window // prediction_resolution
 
         # open signals and events
@@ -145,22 +153,24 @@ class Dataset(Sequence):
         data = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(self.load_data)(
             filename="{}/{}".format(h5_directory, record),
             signals=signals_format
-        ) for record in records)
+        ) for record in tqdm.tqdm(records))
 
 
         for record, data in zip(records, data):
 
             signal_durations = [ int(data[signal_name].shape[0] / signal_format['fs_post']) for signal_name, signal_format in self.signals_format.items()]
             record_duration = min(signal_durations)
-            record_duration_clipped = record_duration - (record_duration % prediction_resolution)
+            #record_duration_clipped = record_duration - (record_duration % prediction_resolution) - 1
+            record_duration_clipped = record_duration - (record_duration % 30)
             number_of_windows = max(1, int((record_duration_clipped - self.window) // (self.window * (1 - self.overlap)) + 1))
+
 
             # find signal info:
             if self.load_signal_in_RAM:
                 for key, item in data.items():
                     data[key] = np.array(item).astype('float32')
                 self.signals[record] = {"data": data}
-            k = 1
+
             self.index_to_record.extend([
                 {
                     "record": record,
@@ -254,51 +264,28 @@ class Dataset(Sequence):
             elif dataset_type == 'train':
                 self.index_to_record = self.index_to_record[index_val:] #deepcopy(self.index_to_record[index_val:])
 
-    """
     def __len__(self):
-        return len(self.index_to_record) // self.batch_size + 1
-
-    def __getitem__(self, idx):
-        idx = idx % int(len(self.index_to_record) // self.batch_size)
-        signal_batch = {
-            signal_name: np.zeros((self.batch_size,
-                                   int(self.window * signal_format['fs_post']),
-                                   signal_format['num_features'])).astype('float32')
-            for signal_name, signal_format in self.signals_format[next(iter(self.signals_format.keys()))].items()}
-        events_batch = []
-        for counter, idx_ in enumerate(range(idx * self.batch_size, (idx + 1) * self.batch_size)):
-            idx_ = idx_ % len(self.index_to_record)
-            for signal_name, signal_format in self.signals_format.items():
-                signal = self.get_signals(
-                    record=self.index_to_record[idx_]['record'],
-                    signal_name=signal_name,
-                    index=self.index_to_record[idx_]['index'])
-                if signal_format['batch_normalization']:
-                    signal = normalizers[signal_format['batch_normalization']['type']](signal, **signal_format['batch_normalization']['args'])
-                for trans in signal_format['transformations'].keys():
-                    signal = self.transformations[trans](signal)
-                signal_batch[signal_name][counter, :] = signal
-            events = self.get_events(
-                record=self.index_to_record[idx_]['record'],
-                index=self.index_to_record[idx_]['index'])
-            events_batch += [events]
-
-        model_input = []
-        for models in self.model_format:
-            model_input += [np.concatenate([signal_batch[signal_name] for signal_name in models['signals']], axis=-1)]
-        return model_input, np.array(events_batch).astype('float32')
-    """
+        max_len = 10000
+        return min(len(self.index_to_record) // (self.batch_size), max_len)
 
     def __getitem__(self, idx):
         idx = idx % int(len(self.index_to_record) // self.batch_size)
         index_to_record = [self.index_to_record[idx_] for idx_ in range(idx * self.batch_size, (idx + 1) * self.batch_size) if idx_ < len(self.index_to_record)]
         signals, events = self.get_item(index_to_record=index_to_record)
         model_input = self.signal_model_prep(signal_batch=signals)
-        return model_input, events
+
+        if len(self.h5_directory_auxiliary) > 0:
+            auxiliary = self.get_auxiliary_item(index_to_record=index_to_record)
+            return [model_input, auxiliary], events
+
+        return [model_input], events
 
     def get_item(self, index_to_record):
-        signal_batch = self.prep_signal_batch(len(index_to_record))
+
+        signal_batch = {signal_name: np.zeros([len(index_to_record), int(self.window * signal_format['fs_post'])] + signal_format['dimensions'])
+                        for signal_name, signal_format in self.signals_format.items()}
         events_batch = []
+
         for counter, itr in enumerate(index_to_record):
             for signal_name, signal_format in self.signals_format.items():
                 signal = self.get_signals(record=itr['record'],
@@ -309,32 +296,66 @@ class Dataset(Sequence):
                 if self.mode == 'train':
                     for trans, item in signal_format['transformations'].items():
                         signal = self.transformations[trans](signal, **item)
-                signal_batch[signal_name][counter, :signal.shape[0], :] = signal
-            events = self.get_events(record=itr['record'],
-                                     index=itr['index'])
-            events_batch += [events]
+
+                signal_batch[signal_name][counter, :signal.shape[0], :] = np.reshape(signal, [signal.shape[0]] + signal_format['dimensions'])
+
+            events_batch += [self.get_events(record=itr['record'], index=itr['index'])]
+
         return signal_batch, np.array(events_batch).astype('float32')
 
-    def prep_signal_batch(self, batch_size):
-        signal_batch = {signal_name: np.zeros((batch_size,
-                                               int(self.window * signal_format['fs_post']),
-                                               signal_format['num_features'])).astype('float32')
-                        for signal_name, signal_format in self.signals_format.items()}
-        return signal_batch
+    def get_record_item(self, record):
+
+        signals = []
+
+        for signal_name, signal_format in self.signals_format.items():
+            signal = self.get_signals_by_record(record=record, signal_name=signal_name)
+            if signal_format['batch_normalization']:
+                signal = normalizers[signal_format['batch_normalization']['type']](signal, **signal_format['batch_normalization']['args'])
+            if self.mode == 'train':
+                for trans, item in signal_format['transformations'].items():
+                    signal = self.transformations[trans](signal, **item)
+            signals += [signal]
+
+        return np.array(signals).transpose(1, 2, 0)
+
+    def get_model_input_by_record(self, record):
+
+        signal = self.get_record_item(record=record)
+
+        if len(self.h5_directory_auxiliary) > 0:
+            auxiliary = self.get_entire_auxiliary_signal(record=record)
+            return [signal, auxiliary]
+        return signal
+
+
+
+    def get_signals_by_record(self, record, signal_name):
+        if self.load_signal_in_RAM:
+            signal_data = self.signals[record]["data"][signal_name]
+        else:
+            data = self.load_data(filename="{}/{}".format(self.h5_directory, record), signals=self.signals_format)
+            signal_data = data[signal_name]
+        return signal_data
+
+    def get_auxiliary_item(self, index_to_record):
+        auxiliary_batch = []
+        for counter, itr in enumerate(index_to_record):
+            auxiliary_batch += [self.get_auxiliary_signal(record=itr['record'], index=itr['index'])]
+        return np.array(auxiliary_batch).astype('float32')
+
 
     def signal_model_prep(self, signal_batch):
         model_input = []
         if isinstance(self.model_format, dict):
             sig = np.concatenate([signal_batch[signal_name] for signal_name in self.model_format['signals']], axis=-1)
             check_inf_nan(sig)
-            model_input += [sig]
+            model_input = sig # += [sig]
         else:
             for models in self.model_format:
                 model_input += [np.concatenate([signal_batch[signal_name] for signal_name in models['signals']], axis=-1)]
         return model_input
 
     def get_signals(self, record, signal_name, index):
-        # TODO - just modify this to zeropadding!
         fs = self.signals_format[signal_name]['fs_post']
         if self.load_signal_in_RAM:
             signal_data = self.signals[record]["data"][signal_name][int(index * fs): int((index + self.window) * fs), :]
@@ -354,11 +375,29 @@ class Dataset(Sequence):
 
             masks = self.get_events_sample(index=index, events=self.events_discard[record], minimum_overlap=0, any_overlap=True)
             mask_any = (np.sum(masks, axis=-1) > 0)
-            mask_non_event = (np.sum(events, axis=-1) == 0)  # mask if no event
+            #mask_non_event = (np.sum(events, axis=-1) == 0)  # mask if no event
             events[mask_any, :] = -1
-            events[mask_non_event, :] = -1
+            #events[mask_non_event, :] = -1
 
         return events
+
+    def get_auxiliary_signal(self, record, index):
+        data, fs = get_h5_auxiliary(filename="{}\\{}\\{}".format(self.h5_directory, self.h5_directory_auxiliary, record),
+                                    labels=['wake', 'light', 'deep', 'rem'])
+        x_aux = data[int(index * fs): int((index + self.window) * fs)]
+        return x_aux
+
+
+
+    def get_entire_auxiliary_signal(self, record, desired_fs=1):
+        data, fs = get_h5_auxiliary(filename="{}\\{}\\{}".format(self.h5_directory, self.h5_directory_auxiliary, record),
+                                    labels=['wake', 'light', 'deep', 'rem'])
+        if desired_fs > fs: # higher resolution requested
+            data = np.repeat(data, int(desired_fs/fs), axis=0)
+        elif desired_fs < fs:
+            data = data[::int(fs / desired_fs), :]
+
+        return data
 
     def get_events_sample(self, index, events, minimum_overlap, any_overlap=True, minimum_duration=10):
         """Return a sample [data, events] from a record at a particular index"""
@@ -389,7 +428,7 @@ class Dataset(Sequence):
                 valid_indexes = set(list(valid_starts_index) +
                                     list(valid_stops_index))
                 # TODO - the mask should not be subject to the minimum overlap requirement.
-                k = 1
+
                 # Annotations contains valid index with minimum overlap requirement
                 for valid_index in valid_indexes:
                     if (durations[valid_index]) > minimum_duration:
@@ -425,14 +464,28 @@ class Dataset(Sequence):
     def get_record_batch(self, record):
 
         record_indexes = [index for index in self.index_to_record if index['record'] == record]
+        start_times = [start_time['index'] for start_time in record_indexes]
+        signals, events = self.get_item(index_to_record=record_indexes)
+        model_input = self.signal_model_prep(signal_batch=signals)
+        if len(self.h5_directory_auxiliary) > 0:
+            auxiliary = self.get_auxiliary_item(index_to_record=record_indexes)
+            yield [model_input, auxiliary], start_times
+        else:
+            yield [model_input], np.array(start_times)
 
-        signal_batch = {signal_name: np.zeros((self.batch_size,
-                                               int(self.window * signal_format['fs_post']),
-                                               signal_format['num_features']))
+    def get_record_input(self, record):
+        record_indexes = [index for index in self.index_to_record if index['record'] == record]
+
+
+    def get_record_batch_(self, record):
+
+        record_indexes = [index for index in self.index_to_record if index['record'] == record]
+        signal_batch = {signal_name: np.zeros([self.batch_size,
+                                               int(self.window * signal_format['fs_post'])] + signal_format['dimensions'])
             for signal_name, signal_format in self.signals_format.items()}
+
         counter, start_times = 0, []
         for record_index in record_indexes:
-
             for signal_name, signal_format in self.signals_format.items():
                 signal = self.get_signals(
                     record=record_index['record'],
@@ -443,7 +496,8 @@ class Dataset(Sequence):
                 if self.mode == 'train':
                     for trans in signal_format['transformations'].keys():
                         signal = self.transformations[trans](signal)
-                signal_batch[signal_name][counter, :signal.shape[0], :] = signal
+
+                signal_batch[signal_name][counter, :signal.shape[0], :] = np.reshape(signal, [signal.shape[0]] + signal_format['dimensions'])
             start_times += [record_index['index']]
             counter += 1
             if counter == self.batch_size:
@@ -455,12 +509,15 @@ class Dataset(Sequence):
                     model_input += [sig]
                 else:
                     for models in self.model_format:
-                        model_input += [np.concatenate([signal_batch[signal_name] for signal_name in models['signals']], axis=-1)]
+                        sig = np.concatenate([signal_batch[signal_name] for signal_name in models['signals']], axis=-1)
+                        check_inf_nan(sig)
+                        model_input += [sig]
                 yield model_input, np.array(start_times)
-                signal_batch = {signal_name: np.zeros((self.batch_size,
-                                                       int(self.window * signal_format['fs_post']),
-                                                       signal_format['num_features']))
-                                for signal_name, signal_format in self.signals_format.items()}
+                signal_batch = {
+                    signal_name: np.zeros(
+                        [self.batch_size, int(self.window * signal_format['fs_post'])] +
+                        signal_format['dimensions'])
+                    for signal_name, signal_format in self.signals_format.items()}
                 counter, start_times = 0, []
 
 
@@ -564,37 +621,61 @@ class Dataset(Sequence):
         records = [i_['record'] for i_ in idx]
         idxs = [i_['index'] for i_ in idx]
         signals, events = self.get_item(index_to_record=idx)
+        if len(self.h5_directory_auxiliary) > 0:
+            auxiliary = self.get_auxiliary_item(index_to_record=idx)
+            return  signals, events, records, idxs, auxiliary
         return signals, events, records, idxs
 
+    def get_data_by_record_2(self, record, model=None):
+        record_dur = [itr['max_index'] + self.window for itr in self.index_to_record if itr['record'] == record][0]
+
+        sig = {signal_name: np.zeros([int(record_dur * signal_format['fs_post'])] + signal_format['dimensions'])
+               for signal_name, signal_format in self.signals_format.items()}
+        tar = np.zeros((record_dur // self.prediction_resolution, self.number_of_events))
+        pre = np.zeros((record_dur // self.prediction_resolution, self.number_of_events))
+
+        # get data
+        if len(self.h5_directory_auxiliary) > 0:
+            signals, events, record_, start_idxs, auxiliary = self.get_data_by_window(record=record)
+        else:
+            signals, events, record_, start_idxs = self.get_data_by_window(record=record)
+
+        if model is not None:
+            model_input = self.signal_model_prep(signal_batch=signals)
+
+            if len(self.h5_directory_auxiliary) > 0:
+                predictions = model.predict([model_input, auxiliary])
+            else:
+                predictions = model.predict([model_input])
+
+            #predictions = self.predict_on_data(model=model, signals=[signals, auxiliary])
+
+        # unwrap windowed predictions
+        for idx, start_idx in enumerate(start_idxs):
+            for signal_name, signal_format in self.signals_format.items():
+                sig[signal_name][int(start_idx * signal_format['fs_post']):
+                                 int((start_idx + self.window) * signal_format['fs_post']), :] = signals[signal_name][idx, :]
+
+            tar[start_idx // self.prediction_resolution:
+                (start_idx + self.window) // self.prediction_resolution, :] = events[idx, :]
+            if model is not None:
+                pre[start_idx // self.prediction_resolution:
+                    (start_idx + self.window) // self.prediction_resolution, :] = predictions[idx, :]
+
+        return sig, tar, pre
+
     def get_data_by_record(self, model=None):
+
+        records = self.records
+
         sig_rec = []
         tar_rec = []
         pre_rec = []
         rec_dur = []
 
-        for record in self.records:
+        for record in records:
             record_dur = [itr['max_index'] + self.window for itr in self.index_to_record if itr['record'] == record][0]
-
-            sig = {key: np.zeros((int(record_dur * item['fs_post']), item['num_features']))
-                      for key, item in self.signals_format.items()}
-            tar = np.zeros((record_dur // self.prediction_resolution, self.number_of_events))
-            pre = np.zeros((record_dur // self.prediction_resolution, self.number_of_events))
-
-            # get data
-            signals, events, record_, start_idxs = self.get_data_by_window(record=record)
-            if model is not None:
-                predictions = self.predict_on_data(model=model, signals=signals)
-
-            for idx, start_idx in enumerate(start_idxs):
-                for key, item in self.signals_format.items():
-                    sig[key][int(start_idx * item['fs_post']):
-                             int((start_idx + self.window) * item['fs_post']), :] = signals[key][idx, :]
-                tar[start_idx // self.prediction_resolution:
-                    (start_idx + self.window) // self.prediction_resolution, :] = events[idx, :]
-                if model is not None:
-                    pre[start_idx // self.prediction_resolution:
-                        (start_idx + self.window) // self.prediction_resolution, :] = predictions[idx, :]
-
+            sig, tar, pre = self.get_data_by_record_2(record, model=None)
             sig_rec += [sig]
             tar_rec += [tar]
             rec_dur += [record_dur]
@@ -625,8 +706,9 @@ class Dataset(Sequence):
             'deep': 1,
             'light': 2,
             'rem': 3,
-            'wake': 4
+            'wake': 4,
         }
+
         target_loc = np.argmax(targets, axis=1)
         hyp_labels = np.array([self.event_labels[tar] for tar in target_loc])
         hyp_labels[targets[:, 0] == -1] = 'mask'
@@ -634,8 +716,9 @@ class Dataset(Sequence):
         return hyp_plot_position
 
     def plot(self, filename='', save_dir='', signals=None, targets=None, predictions=None, extra_events=None,
-             figsize=(5.5, 0.75), disp_HRV_features=False, window_len=30, plot_hypnogram=True,
-             labelx=-0.07, labely=0.5, fontsize=6, labelpad=10):
+             figsize=(7, 1), disp_HRV_features=False, window_len=30, plot_hypnogram=True,
+             labelx=-0.07, labely=0.5, fontsize=7, labelpad=5):
+        matlab_colorcodes = ['#0051a2', '#97964a', '#ffd44f', '#f4777f', '#93003a']
 
         create_directory_tree(save_dir)
 
@@ -658,22 +741,31 @@ class Dataset(Sequence):
         for key, item in self.signals_format.items():
 
             fig = plt.figure(figsize=figsize)
-            ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
+            gs = fig.add_gridspec(nrows=1, ncols=40)
+            ax = fig.add_subplot(gs[0, :-2])
+
+
+            #fig, (ax, ax1) = plt.subplots(1, 2, figsize=figsize, gridspec_kw={'width_ratios': [20, 1]})
+            # fig. = plt.figure(figsize=figsize)
+
+            #ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.spines['left'].set_visible(False)
+            ax.spines['left'].set_linewidth(0.2)
 
-            t = np.arange(start=0, stop=(signals[key].shape[0]), step=1) / (item['fs_post'] * factor)
+            t = (np.arange(start=0, stop=(signals[key].shape[0]), step=1) + .5) / (item['fs_post'] * factor)
             # xaxis = np.arange(start=0, stop=(signals[key].shape[0]) / (item['fs_post']), step=(signals[key].shape[0]) / (item['fs_post']) // 10)
             xaxis = np.arange(start=0, stop=window_len // factor + 1, step=steps)
             k = 1
-            if key[-4:] == 'spec' or key == 'feature_based_acc':
+            if key[-4:] == 'spec' or key == 'feature_based_acc' or 'superlet' in key:
 
                 # extract spectrogram
-                S = np.swapaxes(signals[key], axis1=1, axis2=0)
+                S = signals[key][:, :, 0]
+                S = np.swapaxes(S, axis1=1, axis2=0)
                 S = np.flipud(S)
-                S = (S - S.min()) / (S.max() - S.min())
+                #S = (S - S.min()) / (S.max() - S.min())
                 # TODO - du normalizere her!
+                #S = np.log2(S + 1)
 
                 if key[-12:] == 'cwt_new_spec':
 
@@ -684,16 +776,17 @@ class Dataset(Sequence):
                     im = ax.imshow(S, extent=(np.amin(t), np.amax(t), np.amin(f), np.amax(f)),
                                     aspect='auto',
                                     vmin=np.quantile(S, q=0.05), vmax=np.quantile(S, q=0.99))
+
                     #np.logspace(start=-1, stop=np.log10(f_max), num=8, base=10)                                # vmin=-10, vmax=10)
 
                     # y axis
                     yticks = np.arange(start=f[0], stop=f[-1], step=(f[-1] - f[0]) / 8)
                     yaxis = f[::f.shape[0] // 8]
                     ax.yaxis.set_ticks(yticks)
-                    ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+                    ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                     ax.yaxis.set_ticklabels(['{:.1f}'.format(y) for y in yaxis], fontsize=fontsize)
-                    ax.set_ylabel(r'freq (Hz)', size=fontsize, rotation=90, labelpad=labelpad)
-                    ax.yaxis.set_label_coords(labelx, labely)
+                    ax.set_ylabel(r'freq (Hz)', size=fontsize + 1, rotation=90, labelpad=labelpad)
+                    #ax.yaxis.set_label_coords(labelx, labely)
 
                 else:
                     try:
@@ -704,11 +797,11 @@ class Dataset(Sequence):
                         f_max = 3
                         #S = np.swapaxes(S, axis1=1, axis2=0)
                         #S = np.flipud(S)
-                    linear = True
+                    linear = False
                     if linear:
                         yaxis = list(np.arange(start=f_min, stop=f_max, step=(f_max + 1 - f_min) // 2))
                     else:
-                        yaxis = list(np.logspace(start=-3, stop=np.log2(f_max), num=8, base=2))
+                        yaxis = list(np.logspace(start=-3, stop=np.log2(f_max), num=6, base=2))
                         ax.set_yscale("log", basey=2) #, subsy=list(range(6))) #)
 
                     im = ax.imshow(S, extent=(np.amin(t), np.amax(t), f_min, f_max), aspect='auto',
@@ -716,21 +809,25 @@ class Dataset(Sequence):
 
                     # yaxis
                     ax.yaxis.set_ticks(yaxis)
-                    ax.yaxis.set_tick_params(which='major', size=1, width=0.5, direction='out')
+                    ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                     ax.yaxis.set_ticklabels(['{:.1f}'.format(y) for y in yaxis], fontsize=fontsize)
-                    ax.set_ylabel(r'freq (Hz)', size=fontsize, rotation=90, labelpad=labelpad)
-                    ax.yaxis.set_label_coords(labelx, labely)
+                    ax.set_ylabel(r'freq (Hz)', size=fontsize + 1, rotation=90, labelpad=labelpad)
+                    #ax.yaxis.set_label_coords(labelx, labely)
 
                 # x axis
                 ax.xaxis.set_ticks(xaxis)
                 ax.xaxis.set_ticklabels([int(x) for x in xaxis], fontsize=fontsize)
+                ax.xaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                 ax.set_xlabel('time ({})'.format(xlabel), fontsize=fontsize)
+                plt.xlim([0, window_len // factor])
 
                 # colorbar
-                cax = fig.add_axes([0.96, 0, 0.02, 1])  # [left, bottom, width, height]
+                cax = fig.add_subplot(gs[-1])
                 cbar = fig.colorbar(im, cax=cax)
+                cbar.outline.set_linewidth(.2)
                 cbar.ax.tick_params(labelsize=fontsize)
-                cax.set_ylabel('spectral intensity (a.u.)', fontsize=fontsize, labelpad=labelpad)
+                cbar.ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
+                cax.set_ylabel('spectral intensity\n(a.u.)', fontsize=fontsize + 1, labelpad=labelpad)
 
             else:
                 # int_min = np.floor(signals[key].min())
@@ -739,33 +836,40 @@ class Dataset(Sequence):
 
                 #sig_norm = (signals[key] - signals[key].min()) / (signals[key].max() - signals[key].min() + sys.float_info.epsilon)
                 sig_norm = signals[key]
-                ax.plot(t, sig_norm, label=key, linewidth=.4)
+                if len(sig_norm.shape) == 3:
+                    sig_norm = np.reshape(sig_norm, (sig_norm.shape[0], sig_norm.shape[1] * sig_norm.shape[2]))
+
+                for n in range(sig_norm.shape[-1]):
+                    ax.plot(t, sig_norm[:, n], label=key, linewidth=.2, color=matlab_colorcodes[n])
 
                 #xaxis = np.arange(start=0, stop=t[-1], step=60 * 10)
                 #xaxis = np.append(t[::t.shape[0] // 8], t[-1])
                 ax.xaxis.set_ticks(xaxis)
                 ax.xaxis.set_ticklabels([int(x) for x in xaxis], fontsize=fontsize)
+                ax.xaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                 plt.xlabel('time ({})'.format(xlabel), fontsize=fontsize)
                 #plt.xlim([xaxis[0], xaxis[-1]])
                 # plt.xlim([0, t[-1]])
-                plt.xlim([0, window_len // factor + 1])
+                #ax.set_ylim([min(sig_norm.min(), -0.05),
+                #             max(sig_norm.max(), 1.05)])
+                plt.xlim([0, window_len // factor])
 
                 # y axis
                 #yaxis = [0, 0.25, 0.5, 0.75, 1.00]
 
-                ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+                ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                 #ax.yaxis.set_ticks(yaxis)
                 #ax.yaxis.set_ticklabels(['{:.1f}'.format(y) for y in yaxis], fontsize=fontsize)
-                ax.set_ylabel('signal intensity (a.u)', size=fontsize, rotation=90, labelpad=labelpad)
+                ax.set_ylabel('signal intensity \n(a.u)', size=fontsize + 1, rotation=90, labelpad=labelpad)
                 #ax.set_ylim([-0.05, 1.05])
-                ax.yaxis.set_label_coords(labelx, labely)
+                #ax.yaxis.set_label_coords(labelx, labely)
 
-                ax.xaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
+                ax.xaxis.grid(b=True, which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.1)
 
                 if key == 'PPG_features' or  key == 'PPG_features_downsampled':
-                    plt.legend(('FM', 'AM', 'BW'), loc=2, borderaxespad=0., frameon=True, fontsize=fontsize - 1)
+                    plt.legend(('FM', 'AM', 'BW'), loc=2, borderaxespad=0., frameon=True, fontsize=fontsize - 1, ncol=3)
                 if key == 'ACC' or key == 'ACC_raw':
-                    plt.legend(('X', 'Y', 'Z'), loc=2, borderaxespad=0., frameon=True, fontsize=fontsize - 1)
+                    plt.legend(('X', 'Y', 'Z'), loc=2, borderaxespad=0., frameon=True, fontsize=fontsize - 1, ncol=3)
 
             # save figure
             num = 0
@@ -775,46 +879,59 @@ class Dataset(Sequence):
 
         if predictions is not None:
 
+            #fig = plt.figure(figsize=figsize)
+            #ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
+            #ax.spines['right'].set_visible(False)
+            #ax.spines['top'].set_visible(False)
+            #ax.spines['left'].set_visible(False)
+
             fig = plt.figure(figsize=figsize)
-            ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
+            gs = fig.add_gridspec(nrows=1, ncols=40)
+            ax = fig.add_subplot(gs[0, :-2])
+            #ax1 = fig.add_subplot(gs[-1])
+
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.spines['left'].set_visible(False)
+            ax.spines['left'].set_linewidth(0.2)
+            ax.spines['bottom'].set_linewidth(0.2)
+
 
             ts_event = np.arange(start=0, stop=(predictions.shape[0]) * self.prediction_resolution,
                                  step=self.prediction_resolution) / factor
             if plot_hypnogram:
                 hypnogram = self.hypnogram_plot_helper(predictions)
-                ax.plot(ts_event, hypnogram, label='prediction', linewidth=0.5)
+                ax.plot(ts_event, hypnogram, label='prediction', linewidth=0.25)
             else:
                 ax.plot(ts_event, predictions, linewidth=0.5)
 
             # xaxis
             ax.xaxis.set_ticks(xaxis)
+            ax.xaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
             ax.xaxis.set_ticklabels([int(x) for x in xaxis], fontsize=fontsize)
-            ax.xaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
+            ax.xaxis.grid(b=True, which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.1)
             ax.set_xlabel('time ({})'.format(xlabel), fontsize=fontsize)
             # ax.set_xlim([0, t[-1]])
-            plt.xlim([0, window_len // factor + 1])
+            plt.xlim([0, window_len // factor])
 
             # y axis
             # ax.yaxis.set_ticks(yaxis)
             if plot_hypnogram:
-                ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+                ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                 ax.yaxis.set_ticks(list(self.hypnogram_position.values()))
                 ax.yaxis.set_ticklabels(list(self.hypnogram_position.keys()), fontsize=fontsize)
                 #ax.yaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
-                ax.set_ylabel(r'hypnogram', size=fontsize, rotation=90, labelpad=labelpad)
-                ax.set_ylim([-0.05, 4.05])
-                ax.yaxis.set_label_coords(labelx, labely)
+                ax.set_ylabel(r'hypnogram', size=fontsize + 1, rotation=90, labelpad=labelpad)
+                ax.set_ylim([-0.1, 4.1])
+                #ax.yaxis.set_label_coords(labelx, labely)
             else:
-                ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+                ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                 ax.yaxis.set_ticks(list([0, 1]))
                 ax.yaxis.set_ticklabels(['no event', 'event'], fontsize=fontsize)
-                ax.yaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
-                ax.set_ylabel(r'event', size=fontsize, rotation=90, labelpad=labelpad)
+                ax.yaxis.grid(which='major', linestyle='-', linewidth='0.2', color='black', alpha=0.1)
+                ax.yaxis.grid(which='minor', linestyle='-', linewidth='0.1', color='black', alpha=0.1)
+                ax.set_ylabel(r'event', size=fontsize + 1, rotation=90, labelpad=labelpad)
                 ax.set_ylim([-0.05, 1.05])
-                ax.yaxis.set_label_coords(labelx, labely)
+                #ax.yaxis.set_label_coords(labelx, labely)
 
             num = 0
             while os.path.isfile('{}\\{}{}_{}.png'.format(save_dir, filename, 'prediction', num)): num += 1
@@ -828,46 +945,56 @@ class Dataset(Sequence):
 
             # while os.path.isfile('{}\\{}{}_{}.png'.format(save_dir, filename, 'target', num)): num += 1
             # if not os.path.isfile('{}\\{}{}_{}.png'.format(save_dir, filename, 'target', num)):
+            #fig = plt.figure(figsize=figsize)
+            #ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
+
             fig = plt.figure(figsize=figsize)
-            ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
+            gs = fig.add_gridspec(nrows=1, ncols=40)
+            ax = fig.add_subplot(gs[0, :-2])
+            #ax1 = fig.add_subplot(gs[-1])
+
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.spines['left'].set_visible(False)
+            ax.spines['left'].set_linewidth(0.2)
+            ax.spines['bottom'].set_linewidth(0.2)
 
             ts_event = np.arange(start=0, stop=(targets.shape[0]) * self.prediction_resolution,
                                  step=self.prediction_resolution) / factor
             if plot_hypnogram:
                 hypnogram = self.hypnogram_plot_helper(targets)
-                ax.plot(ts_event, hypnogram, label='target', linewidth=0.5)
+                ax.plot(ts_event, hypnogram, label='target', linewidth=0.25)
             else:
                 ax.plot(ts_event, targets, linewidth=0.5)
 
             # x axis
             ax.xaxis.set_ticks(xaxis)
+            ax.xaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
             ax.xaxis.set_ticklabels([int(x) for x in xaxis], fontsize=fontsize)
-            ax.xaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
+
+            ax.xaxis.grid(b=True, which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.1)
             ax.set_xlabel('time ({})'.format(xlabel), fontsize=fontsize)
             #ax.set_xlim([0, t[-1]])
-            plt.xlim([0, window_len // factor + 1])
+            plt.xlim([0, window_len // factor])
 
             # y axis
             # ax.yaxis.set_ticks(yaxis)
             if plot_hypnogram:
-                ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+                ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                 ax.yaxis.set_ticks(list(self.hypnogram_position.values()))
                 ax.yaxis.set_ticklabels(list(self.hypnogram_position.keys()), fontsize=fontsize)
                 #ax.yaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
-                ax.set_ylabel(r'hypnogram', size=fontsize, rotation=90, labelpad=labelpad)
-                ax.set_ylim([-0.05, 4.05])
-                ax.yaxis.set_label_coords(labelx, labely)
+                ax.set_ylabel(r'hypnogram', size=fontsize + 1, rotation=90, labelpad=labelpad)
+                ax.set_ylim([-0.1, 4.1])
+                #ax.yaxis.set_label_coords(labelx, labely)
             else:
-                ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+                ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
                 ax.yaxis.set_ticks(list([0, 1]))
                 ax.yaxis.set_ticklabels(['no event', 'event'], fontsize=fontsize)
-                ax.yaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
-                ax.set_ylabel(r'events', size=fontsize, rotation=90, labelpad=labelpad)
+                ax.yaxis.grid(which='major', linestyle='-', linewidth='0.2', color='black', alpha=0.1)
+                ax.yaxis.grid(which='minor', linestyle='-', linewidth='0.1', color='black', alpha=0.1)
+                ax.set_ylabel(r'events', size=fontsize + 1, rotation=90, labelpad=labelpad)
                 ax.set_ylim([-0.05, 1.05])
-                ax.yaxis.set_label_coords(labelx, labely)
+                #ax.yaxis.set_label_coords(labelx, labely)
 
             num = 0
             while os.path.isfile('{}\\{}{}_{}.png'.format(save_dir, filename, 'target', num)): num += 1
@@ -877,16 +1004,16 @@ class Dataset(Sequence):
             #plt.savefig('{}\\{}{}_{}.pdf'.format(save_dir, filename, 'target', num), transparent=True, dpi=600,
             #            bbox_inches='tight')
 
-    def plot_hypnogram(self, hypnogram, filename = '', save_dir = '', window_len=None, figsize=(5.5, 0.75)):
+    def plot_hypnogram(self, hypnogram, filename = '', save_dir = '', window_len=None, figsize=(7, 1), fontsize=6):
 
         create_directory_tree(save_dir)
 
-        fontsize = 6
+        #fontsize = 9
         labelpad = 0
         num = 0
         labelx = -0.07
         labely = 0.5
-        labelpad = 0
+        labelpad = 5
 
         if window_len < 300:
             factor = 1
@@ -905,9 +1032,11 @@ class Dataset(Sequence):
 
         fig = plt.figure(figsize=figsize)
         ax = fig.add_axes([0.05, 0, 0.90, 1])  # [left, bottom, width, height]
+
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
-        ax.spines['left'].set_visible(False)
+        ax.spines['left'].set_linewidth(0.2)
+        ax.spines['bottom'].set_linewidth(0.2)
 
         # x axis
         # xaxis = np.arange(start=0, stop=window_len // factor, step=steps)
@@ -917,9 +1046,10 @@ class Dataset(Sequence):
         # if not os.path.isfile('{}\\{}{}_{}.png'.format(save_dir, filename, 'target', num)):
         fig = plt.figure(figsize=figsize)
         ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['left'].set_visible(False)
+        #ax.spines['right'].set_visible(False)
+        #ax.spines['top'].set_visible(False)
+        #ax.spines['left'].set_visible(False)
+        ax.spines['bottom'].set_linewidth(0.2)
 
         ts_event = np.arange(start=0, stop=(hypnogram.shape[0]) * self.prediction_resolution,
                              step=self.prediction_resolution) / factor
@@ -929,19 +1059,20 @@ class Dataset(Sequence):
 
         # x axis
         ax.xaxis.set_ticks(xaxis)
+        ax.xaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
         ax.xaxis.set_ticklabels([int(x) for x in xaxis], fontsize=fontsize)
-        ax.xaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
+        ax.xaxis.grid(b=True, which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.1)
         ax.set_xlabel('time ({})'.format(xlabel), fontsize=fontsize)
         # ax.set_xlim([0, t[-1]])
-        plt.xlim([0, window_len // factor + 1])
+        plt.xlim([0, window_len // factor])
 
-        ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+        ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
         ax.yaxis.set_ticks(list(self.hypnogram_position.values()))
         ax.yaxis.set_ticklabels(list(self.hypnogram_position.keys()), fontsize=fontsize)
         #ax.yaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
-        ax.set_ylabel(r'hypnogram', size=fontsize, rotation=90, labelpad=labelpad)
-        ax.set_ylim([-0.05, 4.05])
-        ax.yaxis.set_label_coords(labelx, labely)
+        ax.set_ylabel(r'hypnogram', size=fontsize + 1, rotation=90, labelpad=labelpad)
+        ax.set_ylim([-0.1, 4.1])
+        #ax.yaxis.set_label_coords(labelx, labely)
 
         # save stuff
         plt.savefig('{}\\{}{}_{}.png'.format(save_dir, filename, 'hypnogram', num), transparent=True, dpi=300,
@@ -951,16 +1082,16 @@ class Dataset(Sequence):
         #            bbox_inches='tight')
 
 
-    def plot_events(self, events, labels, filename = '', save_dir = '', window_len=None, figsize=(5.5, 0.75)):
+    def plot_events(self, events, labels, filename = '', save_dir = '', window_len=None, figsize=(7, 1), fontsize=6):
 
         create_directory_tree(save_dir)
 
-        fontsize = 6
+        # fontsize = 9
         labelpad = 0
         num = 0
         labelx = -0.07
         labely = 0.5
-        labelpad = 0
+        labelpad = 5
 
         num_format = len(events)
 
@@ -983,10 +1114,14 @@ class Dataset(Sequence):
         if not os.path.isfile('{}\\{}{}_{}.png'.format(save_dir, filename, 'extra', num)):
 
             fig = plt.figure(figsize=figsize)
-            ax = fig.add_axes([0.05, 0, 0.90, 1]) # [left, bottom, width, height]
+            gs = fig.add_gridspec(nrows=1, ncols=40)
+            ax = fig.add_subplot(gs[0, :-2])
+            # ax1 = fig.add_subplot(gs[-1])
+
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.spines['left'].set_visible(False)
+            ax.spines['left'].set_linewidth(0.2)
+            ax.spines['bottom'].set_linewidth(0.2)
 
             for count, event in enumerate(events):
                 for n in event:
@@ -998,22 +1133,23 @@ class Dataset(Sequence):
             xaxis = np.arange(start=0, stop=window_len // factor + 1, step=steps)
             # xaxis = np.append(t[::t.shape[0] // 8], t[-1])
             ax.xaxis.set_ticks(xaxis)
+            ax.xaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
             ax.xaxis.set_ticklabels([int(x) for x in xaxis], fontsize=fontsize)
             #ax.xaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
             plt.xlabel('time ({})'.format(xlabel), fontsize=fontsize)
-            plt.xlim([0, window_len // factor + 1])
+            plt.xlim([0, window_len // factor])
 
-            ax.xaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
+            ax.xaxis.grid(b=True, which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.1)
 
             # y axis
             # ax.yaxis.set_ticks(yaxis)
-            ax.yaxis.set_tick_params(which='major', size=2, width=0.5, direction='out')
+            ax.yaxis.set_tick_params(which='major', size=2, width=0.2, direction='out')
             ax.yaxis.set_ticks([x + 0.5 for x in range(num_format)])
             ax.yaxis.set_ticklabels(labels + ['']*(num_format - len(labels)), fontsize=fontsize)
             # ax.yaxis.grid(which='major', linestyle='-', linewidth='0.5', color='black', alpha=0.2)
-            ax.set_ylabel(r'event', size=fontsize, rotation=90, labelpad=labelpad)
+            ax.set_ylabel(r'event', size=fontsize + 1, rotation=90, labelpad=labelpad)
             ax.set_ylim([0 - 0.05, num_format + 0.05])
-            ax.yaxis.set_label_coords(labelx, labely)
+            #ax.yaxis.set_label_coords(labelx, labely)
 
 
 

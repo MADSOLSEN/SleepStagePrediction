@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 from utils import semantic_formating, any_formating
 from datasets import Dataset
 from signal_processing import regularizers, normalizers
-from utils import get_h5_data, get_h5_events, check_inf_nan
+from utils import get_h5_data, get_h5_events, check_inf_nan, get_h5_auxiliary
 
 
 class BalancedDataset(Dataset):
@@ -30,6 +30,7 @@ class BalancedDataset(Dataset):
                  events_format=None,
                  prediction_resolution=1,
                  overlap=0.5,
+                 h5_directory_auxiliary='',
                  minimum_overlap=0.5,
                  batch_size=64,
                  mode='inference',
@@ -40,11 +41,13 @@ class BalancedDataset(Dataset):
                  select_threshold=10,
                  use_mask=True,
                  cache_data=True,
-                 load_signal_in_RAM=True):
+                 load_signal_in_RAM=True,
+                 batch_len_multiplier=1):
 
         super().__init__(records=records,
                          h5_directory=h5_directory,
                          signals_format=signals_format,
+                         h5_directory_auxiliary=h5_directory_auxiliary,
                          window=window,
                          model_format=model_format,
                          events_discard_format=events_discard_format,
@@ -63,7 +66,8 @@ class BalancedDataset(Dataset):
                          dataset_type=dataset_type,
                          use_mask=use_mask,
                          cache_data=cache_data,
-                         load_signal_in_RAM=load_signal_in_RAM)
+                         load_signal_in_RAM=load_signal_in_RAM,
+                         batch_len_multiplier=batch_len_multiplier)
 
     def __getitem__(self, idx):
         signal_batch, events_batch = [], []
@@ -134,6 +138,7 @@ class CombineDatasets(Dataset):
                  prediction_resolution=1,
                  minimum_overlap=0.5,
                  batch_size=64,
+                 h5_directory_auxiliary='',
                  mode='inference',
                  transformations_factor=0.1,
                  discard_threshold=10,
@@ -143,13 +148,15 @@ class CombineDatasets(Dataset):
                  use_mask=True,
                  dataset_type='',
                  cache_data=False,
-                 load_signal_in_RAM=True):
+                 load_signal_in_RAM=True,
+                 batch_len_multiplier=1):
 
         super().__init__(records=[],
                          h5_directory=None,
                          signals_format={},
                          events_discard_format=events_discard_format,
                          events_select_format=events_select_format,
+                         h5_directory_auxiliary=h5_directory_auxiliary,
                          window=window,
                          model_format=model_format,
                          number_of_channels=number_of_channels,
@@ -165,12 +172,14 @@ class CombineDatasets(Dataset):
                          use_mask=use_mask,
                          dataset_type=dataset_type,
                          cache_data=cache_data,
-                         load_signal_in_RAM=load_signal_in_RAM)
+                         load_signal_in_RAM=load_signal_in_RAM,
+                         batch_len_multiplier=batch_len_multiplier)
 
         self.mode = mode
         self.number_of_databases = len(datasets)
         self.dataset_names = [database['name'] for database in datasets]
         self.datasets_probabilities = [database['probability'] for database in datasets]
+        self.batch_len_multiplier = batch_len_multiplier
 
         self.signals = {}
         self.events = {}
@@ -199,18 +208,39 @@ class CombineDatasets(Dataset):
         iterations = []
         for dataset_num in range(self.number_of_databases):
             iterations += [len(self.index_to_record[self.dataset_names[dataset_num]])]
-        max_len = 1000
-        return min((sum(iterations) // (self.batch_size)), max_len)
+        max_len = 10000
+        return min((int(sum(iterations) * self.batch_len_multiplier) // (self.batch_size)), max_len)
 
     def __getitem__(self, idx):
-        signal_batch = {signal_name: np.zeros((self.batch_size,
-                                               int(self.window * signal_format['fs_post']),
-                                               signal_format['num_features'])).astype('float32')
-            for signal_name, signal_format in self.signals_format[next(iter(self.signals_format.keys()))].items()}
+
+        dataset_names, records, indexes = zip(*[self.find_balanced_index() for counter in range(self.batch_size)])
+        signals, events = self.get_item_datasets(dataset_names, records, indexes)
+        model_input = self.signal_model_prep(signal_batch=signals)
+
+        if len(self.h5_directory_auxiliary) > 0:
+            auxiliary = self.get_auxiliary_item_datsets(dataset_names, records, indexes)
+            return [model_input, auxiliary], events
+
+        return model_input, events
+
+    def final_prep(self, dataset_names, records, indexes):
+        signals, events = self.get_item_datasets(dataset_names, records, indexes)
+        model_input = self.signal_model_prep(signal_batch=signals)
+
+        if len(self.h5_directory_auxiliary) > 0:
+            auxiliary = self.get_auxiliary_item_datsets(dataset_names, records, indexes)
+            return [model_input, auxiliary], events
+        return model_input, events
+
+
+    def get_item_datasets(self, dataset_names, records, indexes):
+        signal_batch = {signal_name: np.zeros([self.batch_size,
+                                               int(self.window * signal_format['fs_post'])] + signal_format[
+                                                  'dimensions'])
+                        for signal_name, signal_format in self.signals_format[next(iter(self.signals_format.keys()))].items()}
         events_batch = []
 
-        for counter in range(self.batch_size):
-            dataset_name, record, index = self.find_balanced_index()
+        for counter, (dataset_name, record, index) in enumerate(zip(dataset_names, records, indexes)):
             for signal_name, signal_format in self.signals_format[next(iter(self.signals_format.keys()))].items():
                 signal = self.get_signal_database(dataset_name, record, signal_name, index)
                 if signal_format['batch_normalization']:
@@ -219,21 +249,34 @@ class CombineDatasets(Dataset):
                 if self.mode == 'train':
                     for trans, item in signal_format['transformations'].items():
                         signal = self.transformations[trans](signal, **item)
-                signal_batch[signal_name][counter, :signal.shape[0], :] = signal
-            events = self.get_events_database(dataset_name, record, index)
-            events_batch += [events]
+                signal_batch[signal_name][counter, :signal.shape[0], :] = np.reshape(signal,
+                                                                                 [signal.shape[0]] + signal_format[
+                                                                                     'dimensions'])
+
+            events_batch += [self.get_events_database(dataset_name, record, index)]
+
+        """
         model_input = []
         if isinstance(self.model_format, dict):
             sig = np.concatenate([signal_batch[signal_name] for signal_name in self.model_format['signals']], axis=-1)
             check_inf_nan(sig)
             model_input += [sig]
         else:
-            for models in self.model_format:
-                sig = np.concatenate([signal_batch[signal_name] for signal_name in models['signals']], axis=-1)
+            for models_old in self.model_format:
+                sig = np.concatenate([signal_batch[signal_name] for signal_name in models_old['signals']], axis=-1)
                 check_inf_nan(sig)
                 model_input += [sig]
         k = 1
-        return model_input, np.array(events_batch).astype('float32')
+        """
+        return signal_batch, np.array(events_batch).astype('float32')
+
+    def get_auxiliary_item_datsets(self, dataset_names, records, indexes):
+        auxiliary_batch = []
+        for counter, (dataset_name, record, index) in enumerate(zip(dataset_names, records, indexes)):
+            auxiliary_batch += [self.get_auxiliary_database(database_name=dataset_name,
+                                                            record=record,
+                                                            index=index)]
+        return np.array(auxiliary_batch).astype('float32')
 
 
     def get_signal_database(self, database_name, record, signal_name, index):
@@ -250,10 +293,24 @@ class CombineDatasets(Dataset):
         if self.use_mask:
             masks = self.get_events_sample(index=index, events=self.events_discard[database_name][record], minimum_overlap=0, any_overlap=True)
             mask_any = (np.sum(masks, axis=-1) > 0)
-            mask_non_event = (np.sum(events, axis=-1) == 0) # mask if no event
+            #mask_non_event = (np.sum(events, axis=-1) == 0) # mask if no event
             events[mask_any, :] = -1
-            events[mask_non_event, :] = -1
+            #events[mask_non_event, :] = -1
         return events
+
+    def get_auxiliary_database(self, database_name, record, index):
+        data, fs = get_h5_auxiliary(filename="{}\\{}\\{}".format(self.h5_directories[database_name], self.h5_directory_auxiliary, record),
+                                    labels=['wake', 'light', 'deep', 'rem'])
+        x_aux = data[int(index * fs): int((index + self.window) * fs), :]
+        if x_aux.shape[0] != int(self.window * fs):
+            print(database_name)
+            print(record)
+            print(index)
+            print(x_aux.shape[0])
+            print(int(self.window * fs))
+        assert(x_aux.shape[0] == int(self.window * fs))
+
+        return x_aux
 
     def find_balanced_index(self):
         dataset = np.random.choice((self.number_of_databases), p=self.datasets_probabilities)
