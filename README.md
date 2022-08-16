@@ -9,9 +9,12 @@ STFT: Short Time Fourier Transform; ACC: Accelerometry; PPG: Photoplethysmograph
 [[Paper](https://ieeexplore.ieee.org/document/9813567)|[Presentation](Link)]
 
 [^1]: Olsen, Mads, Jamie M. Zeitzer, Risa N. Richardson, Polina Davidenko, Poul J. Jennum, Helge BD Sørensen, and Emmanuel Mignot. "A flexible deep learning architecture for temporal sleep stage classification using accelerometry and photoplethysmography." IEEE Transactions on Biomedical Engineering (2022).
-[^2] M. Perslev, S. Darkner, L. Kempfner, M. Nikolic, P. J. Jennum, and C. Igel, “U-Sleep: resilient high-frequency sleep staging,” npj Digit. Med., vol. 4, no. 1, pp. 1–12, 2021.
-[^3] O. Ronneberger, P. Fischer, and T. Brox, “U-net: Convolutional networks for biomedical image segmentation,” Lect. Notes Comput. Sci. (including Subser. Lect. Notes Artif. Intell. Lect. Notes Bioinformatics), vol. 9351, pp. 234–241, 2015.
-[^4] H. Li and Y. Guan, “DeepSleep convolutional neural network allows accurate and fast detection of sleep arousal,” Commun. Biol., vol. 4, no. 1, pp. 1–11, 2021. 
+
+[^2]: M. Perslev, S. Darkner, L. Kempfner, M. Nikolic, P. J. Jennum, and C. Igel, “U-Sleep: resilient high-frequency sleep staging,” npj Digit. Med., vol. 4, no. 1, pp. 1–12, 2021.
+
+[^3]: O. Ronneberger, P. Fischer, and T. Brox, “U-net: Convolutional networks for biomedical image segmentation,” Lect. Notes Comput. Sci. (including Subser. Lect. Notes Artif. Intell. Lect. Notes Bioinformatics), vol. 9351, pp. 234–241, 2015.
+
+[^4]: H. Li and Y. Guan, “DeepSleep convolutional neural network allows accurate and fast detection of sleep arousal,” Commun. Biol., vol. 4, no. 1, pp. 1–11, 2021. 
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------
 ## Minimal example
