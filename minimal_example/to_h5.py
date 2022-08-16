@@ -22,6 +22,8 @@ for record in tqdm.tqdm(records):
     h5_filename = '{}/{}.h5'.format(h5_dir, record)
 
     with h5py.File(h5_filename, 'w') as h5:
+
+        # Extract each annotation file from the record directory:
         for anno_filename, anno_labels in annotations.items():
             anno_filename = data_dir + record + anno_filename
 
