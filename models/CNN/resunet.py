@@ -5,7 +5,7 @@ from tensorflow.keras.regularizers import l2
 from tensorflow_addons.layers import StochasticDepth
 
 def ResUNet(input_shape,
-            number_of_classes,
+            num_classes,
             num_outputs,
             depth=None,
             init_filter_num=8,
@@ -119,7 +119,7 @@ def ResUNet(input_shape,
 
 
     # non-linear activation:
-    x = layers.Conv1D(filters=number_of_classes,
+    x = layers.Conv1D(filters=num_classes,
                   kernel_size=1,
                   padding='same',
                   activation=activation,
@@ -130,7 +130,7 @@ def ResUNet(input_shape,
 
     # Classification
     # ========================================================
-    x = layers.Dense(units=number_of_classes,
+    x = layers.Dense(units=num_classes,
                      activation=output_layer)(x)
 
     return Model(inputs=x_input, outputs=x)

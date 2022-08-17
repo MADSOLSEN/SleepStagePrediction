@@ -11,3 +11,9 @@ def create_pairs(list_for_indexing):
 
     return pair_list
 
+
+def pascal_triangle_indexes(N):
+
+    if N < 1:
+        return None
+

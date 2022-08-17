@@ -1,7 +1,7 @@
-from utils.data_from_h5 import get_h5_data, get_h5_events
+from utils.data_from_h5 import get_h5_data, get_h5_events, get_h5_auxiliary
 from utils.semantic_formating import semantic_formating
 from utils.binary_to_array import binary_to_array
-from utils.jaccard_overlap import jaccard_overlap, intersection_overlap
+from utils.jaccard_overlap import jaccard_overlap, intersection_overlap, relative_start_by_intersection
 from utils.non_max_suppression import non_max_suppression
 from utils.any_formating import any_formating
 from utils.save_load_variables import save_obj, load_obj
@@ -19,6 +19,7 @@ from utils.AveragePooling import pool1d, pool2d
 __all__ = [
     "get_h5_data",
     "get_h5_events",
+    "get_h5_auxiliary",
     "semantic_formating",
     "any_formating",
     "binary_to_array",
@@ -38,4 +39,5 @@ __all__ = [
     "dict_merge",
     "pool1d",
     "pool2d",
+    "relative_start_by_intersection"
 ]

@@ -487,3 +487,4 @@ def ica_decomposition(x, fs, n_components=1):
     x = ica.fit_transform(x)
     # ica.mixing_ # Get estimated mixing matrix
     return x
+

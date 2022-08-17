@@ -11,7 +11,7 @@ def change_names_in_path(path, new_name, delimiter='_'):
                       '{}{}_{}'.format(path, new_name, filename_split[-1]))
 
 
-path = 'E:\\Arc_study\\models\\sleep_stage\\unet_scale\\PPG_fft_spatial_unet\\unet_32\\'
+path = 'E:\\Arc_study\\models_old\\sleep_stage\\unet_scale\\PPG_fft_spatial_unet\\unet_32\\'
 
 
 change_names_in_path(path=path, new_name='model')

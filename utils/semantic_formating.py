@@ -21,13 +21,15 @@ def semantic_formating(output_size, events, sufficient_overlap=.25):
             if event[0] * output_size % 1 <= (1 - sufficient_overlap):
                 start_idx = int(event[0] * output_size)
             else:
-                start_idx = round(event[0] * output_size)
+                start_idx = int(round(event[0] * output_size))
 
             if event[1] * output_size % 1 >= (sufficient_overlap):
                 stop_idx = int(event[1] * output_size) + 1
             else:
-                stop_idx = round(event[1] * output_size)
-
-            output[start_idx: stop_idx] = 1
+                stop_idx = int(round(event[1] * output_size))
+            try:
+                output[start_idx: stop_idx] = 1
+            except:
+                k = 1
 
     return output

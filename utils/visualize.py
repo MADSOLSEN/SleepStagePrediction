@@ -4,13 +4,13 @@ from matplotlib import gridspec
 
 from signal_processing import DA_MagWarp, DA_Jitter, DA_Scaling, DA_Inverting, DA_TimeWarp
 from datasets import get_train_validation_test, Dataset, BalancedDataset
-from models import aggregated_residual_model, transfer_model, reconfigure_model, get_model_activation, predict_dataset, train
+from models_old import aggregated_residual_model, transfer_model, reconfigure_model, get_model_activation, predict_dataset, train
 
 seed = 2020
 h5_directory = 'D:\\datasets\\mesa\\processed_data\\h5\\'
 # h5_directory = 'D:\\datasets\\mesa\\processed_data\\h5_balanced\\'
 # h5_directory = 'D:\\datasets\\Amazfit\\processed_data\\h5\\'
-model_directory = 'D:\\Arc_study\\models\\'
+model_directory = 'D:\\Arc_study\\models_old\\'
 tensorboard_directory = 'D:\\Arc_study\\tensorboard\\'
 training_log_directory = 'D:\\Arc_study\\log\\'
 
