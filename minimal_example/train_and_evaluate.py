@@ -9,7 +9,7 @@ from datasets import BalancedDataset, get_train_validation_test
 data_directory = '../data/h5'
 
 
-# dataset creation
+# datasets creation
 # ======================================================================================================================
 import tensorflow
 import numpy as np

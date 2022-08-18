@@ -33,7 +33,7 @@ def predict_dataset(model,
                     events):
     
     # get it in the following format:
-    # events = [event['name'] for event in dataset.events_format]
+    # events = [event['name'] for event in datasets.events_format]
     predictions = {
         record: {
             event: []
@@ -115,7 +115,7 @@ def predict_dataset_semantic(model, dataset, save_prediction_path=''):
 
     if len(save_prediction_path) > 0:
 
-        # new_dir = os.path.join(dataset.h5_directory, 'model_output')
+        # new_dir = os.path.join(datasets.h5_directory, 'model_output')
 
         new_dir = os.path.join(save_prediction_path, 'model_output')
         create_directory_tree(new_dir)
