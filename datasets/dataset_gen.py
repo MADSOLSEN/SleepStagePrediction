@@ -71,6 +71,9 @@ class DatasetGenerator(Sequence):
         self.overlap = overlap
         self.batch_size = batch_size
         self.predictions_per_window = window // prediction_resolution
+        self.nChannels = sum([sf['dimensions'][-1] for sf in signals_format.values()])
+        self.nSpace = [sf['dimensions'][0] for sf in signals_format.values()][0] # assumes same space resolution
+        self.fsTime = [sf['fs_post'] for sf in signals_format.values()][0] # assumes same temporal resolution
 
         # events
         self.events_format = events_format
@@ -187,42 +190,40 @@ class DatasetGenerator(Sequence):
         max_len = 10000
         return min(len(self.index_to_record) // (self.batch_size), max_len)
 
-
     def __getitem__(self, idx):
-        idx = idx % int(len(self.index_to_record) // self.batch_size)
-        index_to_record = [self.index_to_record[idx_] for idx_ in range(idx * self.batch_size, (idx + 1) * self.batch_size) if idx_ < len(self.index_to_record)]
-        signals, events = self.get_item(index_to_record=index_to_record)
-        model_input = self.signal_model_prep(signal_batch=signals)
 
-        if len(self.h5_directory_auxiliary) > 0:
-            auxiliary = self.get_auxiliary_item(index_to_record=index_to_record)
-            return [model_input, auxiliary], events
+        signal_batch = np.zeros((
+            self.batch_size,
+            self.window * self.fsTime,
+            self.nSpace,
+            self.nChannels
+        )).astype('float32')
 
-        return [model_input], events
+        event_batch = []
 
+        for num, idx_ in enumerate(range(idx * self.batch_size, (idx + 1) * self.batch_size)):
 
-    def get_item(self, index_to_record):
-
-        signal_batch = {signal_name: np.zeros([len(index_to_record), int(self.window * signal_format['fs_post'])] + signal_format['dimensions'])
-                        for signal_name, signal_format in self.signals_format.items()}
-        events_batch = []
-
-        for counter, itr in enumerate(index_to_record):
+            # signals:
+            signals = []
             for signal_name, signal_format in self.signals_format.items():
-                signal = self.get_signals(record=itr['record'],
+
+                signal = self.get_signals(record=self.index_to_record[idx_]['record'],
                                           signal_name=signal_name,
-                                          index=itr['index'])
+                                          index=self.index_to_record[idx_]['index'])
                 if signal_format['batch_normalization']:
                     signal = normalizers[signal_format['batch_normalization']['type']](signal, **signal_format['batch_normalization']['args'])
-                if self.mode == 'train':
+                if self.mode == 'train': # data augmentation:
                     for trans, item in signal_format['transformations'].items():
                         signal = self.transformations[trans](signal, **item)
+                signals += [signal]
 
-                signal_batch[signal_name][counter, :signal.shape[0], :] = np.reshape(signal, [signal.shape[0]] + signal_format['dimensions'])
+            signal_batch[num, :signal.shape[0], :, :] = np.stack(signals, axis=2)
 
-            events_batch += [self.get_events(record=itr['record'], index=itr['index'])]
+            # events:
+            event_batch += [self.get_events(record=self.index_to_record[idx_]['record'], index=self.index_to_record[idx_]['index'])]
 
-        return signal_batch, np.array(events_batch).astype('float32')
+        return signal_batch, np.stack(event_batch, axis=0).astype('float32')
+
 
     def get_record_item(self, record):
 
