@@ -192,13 +192,7 @@ class DatasetGenerator(Sequence):
 
     def __getitem__(self, idx):
 
-        signal_batch = np.zeros((
-            self.batch_size,
-            self.window * self.fsTime,
-            self.nSpace,
-            self.nChannels
-        )).astype('float32')
-
+        signal_batch = np.zeros((self.batch_size, self.window * self.fsTime, self.nSpace, self.nChannels)).astype('float32')
         event_batch = []
 
         for num, idx_ in enumerate(range(idx * self.batch_size, (idx + 1) * self.batch_size)):
