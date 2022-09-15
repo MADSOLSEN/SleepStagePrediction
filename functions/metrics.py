@@ -172,6 +172,7 @@ def cohens_kappa(num_classes):
     return cohens_kappa
 
 
+
 def cohens_kappa1(num_classes, lower_bound=.2, upper_bound=.8, num_samples=100, beta=1):
     thresholds = np.linspace(start=lower_bound, stop=upper_bound, num=num_samples)
     def cohens_kappa2(y_true, y_pred):
