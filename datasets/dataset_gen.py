@@ -7,7 +7,7 @@ import tqdm
 np.seterr(all='raise')
 
 from utils import get_h5_data, get_h5_events, semantic_formating, get_h5_auxiliary
-from signal_processing import normalizers
+from signal_processing import normalizers, regularizers
 
 
 class DatasetGenerator(Sequence):
@@ -88,6 +88,7 @@ class DatasetGenerator(Sequence):
         self.mode = mode
         self.load_signal_in_RAM = load_signal_in_RAM
         self.use_mask = use_mask
+        self.transformations = regularizers
 
         # Preallocation
         self.signals = {}
@@ -217,7 +218,6 @@ class DatasetGenerator(Sequence):
             event_batch += [self.get_events(record=self.index_to_record[idx_]['record'], index=self.index_to_record[idx_]['index'])]
 
         return signal_batch, np.stack(event_batch, axis=0).astype('float32')
-
 
     def get_record_item(self, record):
 
@@ -391,6 +391,22 @@ class DatasetGenerator(Sequence):
 
     def get_record_input(self, record):
         record_indexes = [index for index in self.index_to_record if index['record'] == record]
+
+
+
+    def hypnogram_plot_helper(self, x, mask=None):
+        """
+
+        :param x: vector of sleep stages [T x 4]. Assumed order: ['wake', 'light', 'deep', 'rem'].
+        :return: sleep stage vector with order that corresponds to traditional visualization: [T x 1].
+        ['wake', 'rem', 'light', 'deep'].
+
+        """
+
+        x_reordered = np.stack([x[:, 2], x[:, 1], x[:, 3], x[:, 0]], axis=1)  # reorder to traditional view
+        x_argmax = np.argmax(x_reordered, axis=1)  # take argmax
+        x_argmax[mask] = -1
+        return x_argmax
 
 
     def get_record_batch_(self, record):
@@ -574,3 +590,5 @@ class BalancedDatasetGenerator(DatasetGenerator):
             signal_data, events_data = self.get_sample(random_event['record'], int(index))
 
         return signal_data, events_data
+
+
