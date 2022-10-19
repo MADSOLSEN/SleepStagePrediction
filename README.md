@@ -16,6 +16,9 @@
 ## Minimal example
 Use minimal_example to get started. 
 
+## Data availability
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+The authors do not have permission to share the data used in this study at this point in time. However, the pretrained model is available. Use minimal_example to get started. 
 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------
 ## Reproduction of all experiments in paper
