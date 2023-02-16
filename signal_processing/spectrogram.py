@@ -16,6 +16,7 @@ from signal_processing import zscore_norm
 from matplotlib import gridspec
 from matplotlib.colors import LogNorm
 
+
 def apply_max_len(x, fs):
     maxLen = 3600 * 9
     if x.size / fs > maxLen:
@@ -58,6 +59,7 @@ def cal_autocorrelation_psd(x, fs, window, noverlap, nfft, f_min, f_max, normali
 
     return S
 
+
 def cal_psd_old(x, fs, window, noverlap, nfft, f_min, f_max, plot_flag=True):
 
     # border edit
@@ -87,6 +89,7 @@ def cal_psd_old(x, fs, window, noverlap, nfft, f_min, f_max, plot_flag=True):
         plot_spectrogram(S[start:stop], f_min=f_min, f_max=f_max, t_min=0.0, t_max=x.shape[0]//fs, text='spectrogram')
     k = 1
     return S
+
 
 def cal_psd(x, fs, window, noverlap, nfft, f_min, f_max, f_sub=1, plot_flag=False):
     from scipy.ndimage import maximum_filter as maxfilt
