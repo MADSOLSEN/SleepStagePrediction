@@ -500,6 +500,18 @@ class DatasetGenerator(Sequence):
         sample_frequency = next(iter(self.signals_format.values()))['fs_post']
         return int(num_samples / sample_frequency)
 
+    
+    def get_sample(self, record, index):
+
+        signal_data = self.signals[record]["data"][index: index + self.window_size, :]
+        events = self.get_events_sample(record=record, index=index, events=self.events[record], minimum_overlap=self.minimum_overlap)
+        masks = self.get_events_sample(record=record, index=index, events=self.events_discard[record], minimum_overlap=0, any_overlap=True)
+
+        # apply mask:
+        mask_any = (np.sum(masks, axis=-1) > 0)
+        events[mask_any, :] = -1
+
+        return signal_data, events
 
 
 class BalancedDatasetGenerator(DatasetGenerator):
